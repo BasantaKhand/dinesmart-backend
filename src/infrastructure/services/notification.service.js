@@ -52,9 +52,9 @@ class NotificationService {
                     const roomName = `${role}_notifications`;
                     const roomSockets = io.sockets.adapter.rooms.get(roomName);
                     const socketCount = roomSockets ? roomSockets.size : 0;
-                    
+
                     console.log(`Emitting to room: ${roomName}, connected clients: ${socketCount}`);
-                    
+
                     io.to(roomName).emit('new_notification', {
                         _id: notification._id,
                         type: notification.type,
@@ -401,7 +401,7 @@ If you didn't request this, please ignore this email.
             const roomName = `restaurant_${restaurantId}_${role}`;
             const roomSockets = io.sockets.adapter.rooms.get(roomName);
             const socketCount = roomSockets ? roomSockets.size : 0;
-            
+
             console.log(`📡 RT emit to ${roomName}: "${notification.title}" (${socketCount} clients)`);
             io.to(roomName).emit('new_notification', payload);
         });
@@ -435,9 +435,9 @@ If you didn't request this, please ignore this email.
                     const roomName = `restaurant_${restaurantId}_${role}`;
                     const roomSockets = io.sockets.adapter.rooms.get(roomName);
                     const socketCount = roomSockets ? roomSockets.size : 0;
-                    
+
                     console.log(`Emitting to restaurant room: ${roomName}, clients: ${socketCount}`);
-                    
+
                     io.to(roomName).emit('new_notification', {
                         _id: notification._id,
                         type: notification.type,
@@ -680,6 +680,71 @@ If you didn't request this, please ignore this email.
             },
             io
         );
+    }
+
+    /**
+     * Send password reset email
+     */
+    static async sendPasswordResetEmail({ email, resetUrl }) {
+        try {
+            if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+                console.warn('SMTP credentials not configured. Skipping password reset email.');
+                console.log('🔗 Password reset URL (dev mode):', resetUrl);
+                return { success: false, reason: 'SMTP not configured' };
+            }
+
+            const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset Your Password</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #3a3a3a; line-height: 1.6; background-color: #ffffff; margin: 0; padding: 0;">
+    <div style="max-width: 520px; margin: 0; padding: 24px;">
+        <div style="font-weight: 700; font-size: 16px; margin-bottom: 20px; border-bottom: 1px solid #e5e7eb; padding-bottom: 12px;">DineSmart</div>
+        <div style="font-size: 18px; font-weight: 700; margin-bottom: 12px; color: #18181b;">Reset your password</div>
+        <p style="font-size: 14px; line-height: 1.7; color: #52525b; margin-bottom: 16px;">
+            We received a request to reset the password for your DineSmart account. Click the button below to set a new password.
+        </p>
+        <a href="${resetUrl}" style="display: inline-block; background: #FF5C00; color: #ffffff !important; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; margin: 8px 0 12px;">Reset Password</a>
+        <p style="font-size: 12px; color: #71717a; margin-top: 10px;">This link will expire in 15 minutes.</p>
+        <p style="font-size: 14px; line-height: 1.7; color: #52525b; margin-bottom: 16px;">If the button doesn't work, copy and paste this URL into your browser:<br/>${resetUrl}</p>
+        <p style="font-size: 14px; line-height: 1.7; color: #52525b; margin-bottom: 16px;">If you didn't request this, you can safely ignore this email.</p>
+        <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #71717a;">This is an automated message from DineSmart.</div>
+    </div>
+</body>
+</html>`;
+
+            const textContent = `Reset your password
+
+We received a request to reset the password for your DineSmart account.
+
+Click the link below to set a new password:
+${resetUrl}
+
+This link will expire in 15 minutes.
+
+If you didn't request this, you can safely ignore this email.
+
+This is an automated message from DineSmart.`;
+
+            const mailOptions = {
+                from: `"DineSmart" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: email,
+                subject: 'Reset your DineSmart password',
+                html: htmlContent,
+                text: textContent,
+            };
+
+            const info = await getEmailTransporter().sendMail(mailOptions);
+            console.log('✅ Password reset email sent:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('❌ Error sending password reset email:', error);
+            throw new Error(`Password reset email send failed: ${error.message}`);
+        }
     }
 }
 

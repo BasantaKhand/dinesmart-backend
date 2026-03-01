@@ -1,11 +1,13 @@
 const { AuthenticationError, NotFoundError, ValidationError, AuthorizationError } = require('../../shared/errors');
 const { generateToken } = require('../../shared/utils/jwt');
+const crypto = require('crypto');
 
 class AuthUseCases {
-  constructor({ userRepository, restaurantRepository, activityLogRepository }) {
+  constructor({ userRepository, restaurantRepository, activityLogRepository, notificationService }) {
     this.userRepo = userRepository;
     this.restaurantRepo = restaurantRepository;
     this.activityLogRepo = activityLogRepository;
+    this.notificationService = notificationService;
   }
 
   async login({ email, password, ipAddress, userAgent }) {
@@ -146,6 +148,69 @@ class AuthUseCases {
         role: user.role, restaurantId: user.restaurantId,
       },
     };
+  }
+
+  async forgotPassword({ email }) {
+    if (!email) throw new ValidationError('Please provide an email address');
+
+    const users = await this.userRepo.findByEmail(email);
+    if (users.length === 0) {
+      // Return silently to prevent email enumeration
+      return { message: 'If an account with that email exists, a password reset link has been sent.' };
+    }
+
+    // Use the first matching user (admins have globally unique emails)
+    const user = users[0];
+
+    // Generate a random token and hash it for storage
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    user.passwordResetToken = hashedToken;
+    user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    await this.userRepo.save(user);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const resetUrl = `${frontendUrl}/auth/reset-password?token=${rawToken}&email=${encodeURIComponent(email)}`;
+
+    try {
+      await this.notificationService.sendPasswordResetEmail({ email, resetUrl });
+    } catch (err) {
+      console.error('Failed to send password reset email:', err);
+      // Still return success to avoid leaking info
+    }
+
+    return { message: 'If an account with that email exists, a password reset link has been sent.' };
+  }
+
+  async resetPassword({ email, token, newPassword }) {
+    if (!email || !token || !newPassword) {
+      throw new ValidationError('Email, token, and new password are required');
+    }
+    if (newPassword.length < 6) {
+      throw new ValidationError('New password must be at least 6 characters');
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const User = require('../../infrastructure/db/models/User');
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: new Date() },
+    }).select('+password +passwordResetToken +passwordResetExpires');
+
+    if (!user) {
+      throw new ValidationError('Invalid or expired reset link. Please request a new one.');
+    }
+
+    user.password = newPassword;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.mustChangePassword = false;
+    await user.save();
+
+    return { message: 'Password has been reset successfully. You can now log in with your new password.' };
   }
 }
 
